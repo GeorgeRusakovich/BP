@@ -1,0 +1,387 @@
+---
+title: Differential assessment of systemic and local cytokine levels in patients with
+  atherosclerosis
+author: "George Rusakovich"
+date: "2023-05-11"
+output: html_document
+---
+
+## Setup
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(eval = TRUE)
+knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file("D:/Workflow/Atherosclerosis lab/Bloody plaques/"))
+set.seed(144)
+```
+
+## Libraries
+
+```{r packages, include = FALSE}
+library(tidyverse)
+library(openxlsx)
+library(readxl)
+library(ggplot2)
+library(psych)
+library(ggpubr)
+library(corrplot)
+library(ctrlGene)
+library(NormqPCR)
+library(generefer)
+library(Hmisc)
+library(rstatix)
+library(reshape)
+library(ggplot2)
+```
+
+## Sources
+
+```{r sources}
+data <- read_xlsx("Imputated_data.xlsx")
+data_st <- read_xlsx("Impated for sign test.xlsx")
+raw <- read_xlsx("raw.xlsx")
+
+#
+colnames(raw)[colnames(raw) == "TNFb"] <- "TNF-b"
+colnames(data)[colnames(data) == "TNFb"] <- "TNF-b"
+colnames(data_st)[colnames(data_st) == "TNFb"] <- "TNF-b"
+```
+
+## Analysis
+### 1. Excluding subjects with unfavorable cardiovascular events (TIA, ONMC);
+### 2. Choosing cytokines with detectible concentration in all samples;
+### 3. Implementing geNorm algorithm;
+### 4. Ploting average M-value for reference cytokines;
+### 5. Calculating the pairwise variation between the control cytokines; 
+
+```{r, include=T}
+
+# 1. Exclude subjects with unfavorable cardiovascular events (TIA, ONMC)
+raw <- raw %>%
+  dplyr::filter(`№ пациента` != 129
+                & `№ пациента` != 135
+                & `№ пациента` != 145
+                & `№ пациента` != 146
+                & `№ пациента` != 148)
+
+raw[,c(5:45)] <- sapply(raw[,c(5:45)], as.numeric)
+
+colnames(raw)[1:4] <- c("Sample", "Group", "Plate", "Standard")
+
+raw <- raw %>%
+  mutate(Group = ifelse(Group == 1, "Plasma", "Media"))
+
+# 2. Choosing cytokines with detectible concentration in all samples;
+na_cols <- which(colSums(is.na(raw)) == 0)
+print(na_cols)
+test <- raw[,na_cols]
+df <- test[,c(1,5:9)]
+
+# 3.  Implementing geNorm algorithm;
+results <- ctrlGene::geNorm(df[,c(2:6)],  ctVal=F)
+
+# 4. Ploting average M-value for reference cytokines;
+results
+
+#tiff("plotM_NF.tiff", units="in", width=6, height=5, res=800, pointsize = 7, family = "serif")
+#jpeg("plotM_NF.jpeg", units="in", width = 6, height = 5, res = 800, family = "serif", pointsize = 7)
+plotM(results)
+#dev.off()
+
+# 5. Calculating the pairwise variation between the control cytokines;
+# Create a matrix of cytokines concentration values
+df_raw <- data.frame(
+  Sample = c(raw$Sample),
+  Control1 = c(raw$`PDGF-AA`),
+  Control2 = c(raw$`MIP-1b`),
+  Control3 = c(raw$`TNF-a`),
+  Control4 = c(raw$`IP-10`),
+  Control5 = c(raw$MDC))
+
+df_raw_mat <- as.matrix(df_raw[,2:6])
+
+# 
+pairwiseV(df_raw_mat, ctVal = T) 
+
+#tiff("plotV_NF.tiff", units="in", width=5, height=5, res=800, pointsize = 8, family = "serif")
+#jpeg("plotV_NF.jpeg", units="in", width = 5, height = 5, res = 800, family = "serif", pointsize = 8)
+plotV(pairwiseV(df_raw_mat, ctVal = F))
+#dev.off()
+
+# To determine the optimal number of genes for normalization, you want to choose the smallest number of control genes that results in a low pairwise variation. A good rule of thumb is to choose the smallest number of genes that still achieves a low pairwise variation. A commonly used threshold is 0.15 or 0.2, but the optimal threshold can depend on the specific dataset and analysis.
+
+# Vandesompele J, De Preter K, Pattyn F, et al Accurate normalization of real-time quantitative RT-PCR data by geometric averaging of multiple internal control genes. Genome Biol, 3: RESEARCH0034 2002.
+
+# *Note
+#  Taking all this into consideration, we recommend the minimal use of the three most stable internal control genes for calculation of an RT-PCR normalization factor (NF n , n = 3), and stepwise inclusion of more control genes until the (n + 1)th gene has no significant contribution to the newly calculated normalization factor (NFn + 1). 
+
+# 
+```
+
+### 6. Calculating normalization factor 
+### 7. Ploting correlation plot for different normalization factors calculated by different count of reference cetokines
+### 8. Comparison of reference cytokines concentration after normalization by different number of reference cytokines included into NF. 
+
+```{r, include=T}
+
+### 6. Calculating normalization factor
+
+colnames(raw)
+
+nf <- raw[,na_cols]
+
+nf <- nf %>%
+  mutate(NF_TNFa = `TNF-a`,
+         NF_IP10 = `IP-10`,
+         NF2 = ((`TNF-a`*`IP-10`)^(1/2)),
+         NF3 = ((`TNF-a`*`IP-10`*`MDC`)^(1/3)),
+         NF4 = ((`TNF-a`*`IP-10`*`PDGF-AA`*`MDC`)^(1/4)),
+         NF5 = ((`TNF-a`*`IP-10`*`MIP-1b`*`MDC`*`PDGF-AA`)^(1/5)))
+
+### 7. Ploting correlation plot for different normalization factors calculated by different count of reference cetokines
+
+cormat_control <- corr.test(nf[,10:15], y = NULL, use = "pairwise", method="spearman", adjust="BH", alpha = 0.05)
+
+#tiff("corrplot_NF.tiff", units="in", width=7, height=7, res=800, family = "serif", pointsize = 14)
+#jpeg("corrplot_NF.jpeg", units="in", width = 7, height = 7, res = 800, family = "serif", pointsize = 14)
+corrplot::corrplot(as.matrix(cormat_control$r), type="full", method = 'square', tl.col = 'black', addCoef.col = "black", tl.cex= 0.7, cl.ratio = 0.2, tl.srt = 45, p.mat = cormat_control$p, insig = "blank", mar=c(0,0,1,0))
+#dev.off()
+
+# NF3 and NF4 have high correlation coefficient (~0.92), which means that after normalization to 3 reference or 4 reference cytokines, we will get similar results comparing the groups.
+# And NF2 and NF3 have high correlation coefficient too (~0.81). 
+
+# 8. 
+y <- nf %>%
+  gather(key = "Cytokine", value = "Concentration", - Sample, -Group, -Plate, -Standard,
+         -NF_TNFa, -NF_IP10, -NF2, -NF3, -NF4, -NF5) %>%
+ # mutate(Sample = as.character(Sample)) %>%
+  dplyr::filter(!is.na(Concentration)) %>%
+  arrange(Sample, Cytokine)
+
+y$Concentration5 <- y$Concentration/y$NF5
+y$Concentration4 <- y$Concentration/y$NF4
+y$Concentration3 <- y$Concentration/y$NF3
+y$Concentration2 <- y$Concentration/y$NF2
+y$Concentration1 <- y$Concentration/y$NF_IP10
+y$Concentration1.1 <- y$Concentration/y$NF_TNFa
+
+y$Cytokine %>% unique()
+
+stat.test5 <- compare_means(
+  Concentration5 ~ Group, data = y, group.by = "Cytokine",
+  method = "wilcox.test", paired = T, p.adjust.method = "BH", .id = "Sample") %>%
+  select(Cytokine, `p.adj`) %>%
+  dplyr::rename(`p.adj_NF5`=`p.adj`) 
+
+stat.test4 <- compare_means(
+  Concentration4 ~ Group, data = y, group.by = "Cytokine",
+  method = "wilcox.test", paired = T, p.adjust.method = "BH", .id = "Sample") %>%
+  select(Cytokine, `p.adj`) %>%
+  dplyr::rename(`p.adj_NF4`=`p.adj`) 
+
+stat.test3 <- compare_means(
+  Concentration3 ~ Group, data = y, group.by = "Cytokine",
+  method = "wilcox.test", paired = T, p.adjust.method = "BH", .id = "Sample") %>%
+  select(Cytokine, `p.adj`) %>%
+  dplyr::rename(`p.adj_NF3`=`p.adj`)
+
+stat.test2 <- compare_means(
+  Concentration2 ~ Group, data = y, group.by = "Cytokine",
+  method = "wilcox.test", paired = T, p.adjust.method = "BH", .id = "Sample") %>%
+  select(Cytokine, `p.adj`) %>%
+  dplyr::rename(`p.adj_NF2`=`p.adj`)
+
+stat.test1 <- compare_means(
+  Concentration1 ~ Group, data = y, group.by = "Cytokine",
+  method = "wilcox.test", paired = T, p.adjust.method = "BH", .id = "Sample") %>%
+  select(Cytokine, `p.adj`) %>%
+  dplyr::rename(`p.adj_NF_IP10`=`p.adj`)
+
+stat.test1.1 <- compare_means(
+  Concentration1.1 ~ Group, data = y, group.by = "Cytokine",
+  method = "wilcox.test", paired = T, p.adjust.method = "BH", .id = "Sample") %>%
+  select(Cytokine, `p.adj`) %>%
+  dplyr::rename(`p.adj_NF_TNFa`=`p.adj`)
+
+# В виде таблицы 
+stat.test <- Reduce(function(...) merge(..., all = TRUE, by="Cytokine"),
+                      list(stat.test1, stat.test1.1, stat.test2, stat.test3,
+                           stat.test4, stat.test5))
+
+
+stat.test
+
+#write.xlsx(stat.test, "Different_NF.xlsx")
+
+# *Note
+# I compared cytokines levels between groups after normalization for different number of reference cytokines. And only concentration of 2 cytokines was equal after group comparison. (TNF-a and IP-10)
+# So we decided to use only two control cytokines for normalization (TNF-a and IP-10).
+
+```
+
+### 9. Comparison the normalized concentration of cytokines btw groups by the paired Wilcoxon signed-ranks test
+
+```{r}
+# Merge imputated data with 'nf' dataset (included calculated NF)
+colnames(data)[1:4] <- colnames(nf)[1:4]
+prepared <- merge(data, nf[,c("Sample", "Group", "Plate", "Standard", "NF2")], by = c("Sample", "Group", "Plate", "Standard"))
+
+# Normalize all cytokine concentration values
+prepared[,5:15] <- sapply(prepared[,5:15], function(x) x/prepared$NF2)
+
+# Compare the normalized logarithmic concentration of cytokines btw groups by paired wilcoxon
+x <- prepared %>%
+  gather(key = "Cytokine", value = "Concentration", - Sample, -Group, -Plate, -Standard) %>%
+  mutate(Sample = as.character(Sample)) %>%
+  dplyr::filter(!is.na(Concentration))
+
+x <- x %>%
+  dplyr::filter(Cytokine != "NF2") #exclude calculated NF from data 
+
+#
+stat1 <- x %>%
+  group_by(Group, Cytokine) %>%
+  dplyr::summarise(count = n(),
+                   median = round(median(Concentration, na.rm = TRUE), digits = 2),
+                   Q1 = round(quantile(Concentration, 0.25, na.rm = TRUE), digits = 2),
+                   Q3 = round(quantile(Concentration, 0.75, na.rm = TRUE), digits = 2),
+                   IQR = round(IQR(Concentration, na.rm = TRUE), digits = 2))
+
+# 
+Max <- x %>%
+  group_by(Cytokine) %>%
+  dplyr::summarise(`y.position` = max(Concentration, na.rm = TRUE)*1.08) # calculating y.position for plot
+
+#
+stat.test <- compare_means(
+  Concentration ~ Group, data = x, group.by = "Cytokine",
+  method = "wilcox.test", paired = T, .id = "Sample") 
+
+stat.test <- stat.test[,-6] # remove p.adj calculated automatically 
+stat.test
+
+```
+
+## 10. Visualize results of comparison
+
+```{r, include=T}
+stat.test <- stat.test %>%
+  adjust_pvalue(p.col = "p", method = "BH") %>%
+  add_significance("p.adj")
+
+table_stat <- stat1 %>%
+  select(Group, Cytokine, median, Q1, Q3) %>%
+  mutate(DS = paste(median, " [", Q1, "; ", Q3, "] ")) %>%
+  select(Group, Cytokine, DS) %>%
+  cast(Cytokine ~ Group, value = "DS")
+
+table_stat <- merge(table_stat, stat.test, by="Cytokine")
+
+setwd("D:/Workflow/Atherosclerosis lab/Bloody plaques/Results/")
+#write.xlsx(table_stat, "table_stat.xlsx")
+
+stat.test <- merge(stat.test, Max, by="Cytokine")
+
+colnames(x)
+
+#tiff("Wilcox_cytokines.tiff", units="in", width=8, height=7, res=800, pointsize=6, family = "serif")
+#jpeg("Wilcox_cytokines.jpeg", units="in", width = 8, height = 7, res = 800, family = "serif", pointsize = 6)
+ggboxplot(x[x$Cytokine == "IP-10" | x$Cytokine == "TNF-a",], add = "jitter",
+          x = "Group", y = "Concentration", fill = "Group", scales = "free", facet.by = "Cytokine", 
+          width = 0.5, bxp.errorbar = T, size = 0.5, 
+          palette = c("lightsalmon1", "powderblue")) +
+  stat_pvalue_manual(stat.test[stat.test$Cytokine == "IP-10" | stat.test$Cytokine == "TNF-a",], label = "p.adj.signif", tip.length = 0.01) +
+  theme(axis.text.x = element_blank(),
+        text = element_text(family="serif", size = 14)) +
+  ylab("Normalized cytokine level") +
+  scale_y_continuous(labels = scales::comma)
+#dev.off()
+
+x$Cytokine %>% unique()
+
+# tiff("Wilcox_reference_cytokines.tiff", units="in", width=12, height=12, res=800, pointsize=6, family = "serif")
+#jpeg("Wilcox_reference_cytokines.jpeg", units="in", width = 12, height = 12, res = 800, family = "serif", pointsize = 6)
+ggboxplot(x[x$Cytokine != "IP-10" & x$Cytokine != "TNF-a",], add = "jitter",
+          x = "Group", y = "Concentration", fill = "Group", scales = "free", facet.by = "Cytokine", 
+          width = 0.5, bxp.errorbar = T, size = 0.5, 
+          palette = c("lightsalmon1", "powderblue")) +
+  stat_pvalue_manual(stat.test[stat.test$Cytokine != "IP-10" & stat.test$Cytokine != "TNF-a",], label = "p.adj.signif", tip.length = 0.01) +
+  theme(axis.text.x = element_blank(),
+        text = element_text(family="serif", size = 14)) +
+  ylab("Normalized cytokine level") +
+  scale_y_continuous(labels = scales::comma)
+#dev.off()
+
+```
+
+## 11. Normalize imputed values for other cytokines;
+## 12. Comparing groups by signed rank test;
+
+```{r}
+colnames(data_st)[c(1,3,5)] <- c("Standard", "Sample", "Plate")
+prepared <- merge(data_st, nf[,c("Sample", "Group", "Plate", "Standard", "NF2")], by = c("Sample", "Group", "Plate", "Standard"))
+
+prepared <- prepared %>%
+  mutate(Flag = ifelse(grepl("OOR", Concentration), "Imputed", "Measured"))
+
+x <- prepared %>%
+  mutate(Value = as.numeric(Value),
+         `Normalized value` = Value/NF2)  
+
+x <- x %>%
+  mutate(Start_Interval = case_when(grepl("OOR >", Concentration) ~ `Normalized value`,
+                                    grepl("OOR <", Concentration) ~ 0,
+                                    !grepl("OOR", Concentration) ~ `Normalized value`),
+         End_Interval = case_when(grepl("OOR >", Concentration) ~ 1000000,
+                                  grepl("OOR <", Concentration) ~ `Normalized value`,
+                                  !grepl("OOR", Concentration) ~ `Normalized value`))
+
+colnames(x)
+x$Group %>% unique()
+
+Plasma <- x[x$Group == "Plasma", c("Sample", "Group",
+               "Cytokine", "Concentration", "Imputation", "Normalized value",
+               "Start_Interval", "End_Interval")]
+
+Media <- x[x$Group == "Media", c("Sample", "Group",
+               "Cytokine", "Concentration", "Imputation", "Normalized value",
+               "Start_Interval", "End_Interval")]
+
+colnames(Plasma)[c(2,4:8)] <- paste(colnames(Plasma)[c(2,4:8)], "Plasma", sep="_")
+colnames(Media)[c(2,4:8)] <- paste(colnames(Media)[c(2,4:8)], "Media", sep="_")
+
+Mergind_table <- merge(Plasma, Media, by=c("Sample", "Cytokine"))
+
+colnames(Mergind_table)
+
+Mergind_table <- Mergind_table %>%
+  mutate(Result = case_when(Start_Interval_Media > End_Interval_Plasma ~ "Higher in Media",
+                            Start_Interval_Plasma > End_Interval_Media ~ "Higher in Plasma",
+                            Start_Interval_Media >= Start_Interval_Plasma & Start_Interval_Media <= End_Interval_Plasma ~ "Zero",
+                            Start_Interval_Plasma >= Start_Interval_Media & Start_Interval_Plasma <= End_Interval_Media ~ "Zero",
+                            Start_Interval_Media <= Start_Interval_Plasma & End_Interval_Plasma <= End_Interval_Media ~ "Zero",
+                            Start_Interval_Media >= Start_Interval_Plasma & End_Interval_Plasma >= End_Interval_Media ~ "Zero"))
+
+# Prepare tables for Signed rank test 
+
+# Create table by cytokine with count of Result values
+
+Signed_test <- Mergind_table %>%
+  group_by(Cytokine, Result) %>%
+  summarise(Count = n()) %>%
+  cast(Cytokine~Result, value="Count") %>%
+  replace(is.na(.), 0) %>%
+  mutate(Sum = `Higher in Media` + `Higher in Plasma`)
+
+Signed_test <- Signed_test 
+Signed_test$p_value <- NA
+Signed_test$p_value <- apply(Signed_test, 1, function(x) binom.test(c(as.numeric(x[2]), as.numeric(x[3])), as.numeric(x[5]), p=1/2, alternative = "two.sided")$p.value)
+
+Signed_test <- Signed_test %>%
+  adjust_pvalue(p.col = "p_value", method = "BH")
+
+Signed_test
+
+# write.xlsx(Signed_test, "Signed_rank_test.xlsx")
+```
+
