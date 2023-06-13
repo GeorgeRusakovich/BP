@@ -1,18 +1,16 @@
 ---
-title: Differential assessment of systemic and local cytokine levels in patients with
-  atherosclerosis
+title: "Differential assessment of systemic and local cytokine levels in patients with   atherosclerosis"
 author: "George Rusakovich"
-date: "2023-05-11"
+date: "2023-06-09"
 output: html_document
 ---
-
 ## Setup
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 knitr::opts_chunk$set(eval = TRUE)
+knitr::opts_chunk$set(seed = 144)  
 knitr::opts_knit$set(root.dir = rprojroot::find_rstudio_root_file("D:/Workflow/Atherosclerosis lab/Bloody plaques/"))
-set.seed(144)
 ```
 
 ## Libraries
@@ -32,6 +30,11 @@ library(Hmisc)
 library(rstatix)
 library(reshape)
 library(ggplot2)
+library(factoextra)
+library(cluster)
+library(eclust)
+library(qgraph)
+library(ComplexHeatmap)
 ```
 
 ## Sources
@@ -78,7 +81,7 @@ test <- raw[,na_cols]
 df <- test[,c(1,5:9)]
 
 # 3.  Implementing geNorm algorithm;
-results <- ctrlGene::geNorm(df[,c(2:6)],  ctVal=F)
+results <- ctrlGene::geNorm(df[,c(2,4:6)],  ctVal=F)
 
 # 4. Ploting average M-value for reference cytokines;
 results
@@ -92,11 +95,11 @@ plotM(results)
 # Create a matrix of cytokines concentration values
 df_raw <- data.frame(
   Sample = c(raw$Sample),
-  Control1 = c(raw$`PDGF-AA`),
-  Control2 = c(raw$`MIP-1b`),
-  Control3 = c(raw$`TNF-a`),
-  Control4 = c(raw$`IP-10`),
-  Control5 = c(raw$MDC))
+  Control1 = c(raw$`IP-10`),
+  Control2 = c(raw$`TNF-a`),
+  Control3 = c(raw$MDC),
+  Control4 = c(raw$`PDGF-AA`),
+  Control5 = c(raw$`MIP-1b`))
 
 df_raw_mat <- as.matrix(df_raw[,2:6])
 
@@ -158,38 +161,14 @@ y <- nf %>%
   dplyr::filter(!is.na(Concentration)) %>%
   arrange(Sample, Cytokine)
 
-y$Concentration5 <- y$Concentration/y$NF5
-y$Concentration4 <- y$Concentration/y$NF4
-y$Concentration3 <- y$Concentration/y$NF3
-y$Concentration2 <- y$Concentration/y$NF2
+colnames(nf)
+
+y$Concentration6 <- y$Concentration/y$NF5
+y$Concentration5 <- y$Concentration/y$NF4
+y$Concentration4 <- y$Concentration/y$NF3
+y$Concentration3 <- y$Concentration/y$NF2
+y$Concentration2 <- y$Concentration/y$NF_TNFa
 y$Concentration1 <- y$Concentration/y$NF_IP10
-y$Concentration1.1 <- y$Concentration/y$NF_TNFa
-
-y$Cytokine %>% unique()
-
-stat.test5 <- compare_means(
-  Concentration5 ~ Group, data = y, group.by = "Cytokine",
-  method = "wilcox.test", paired = T, p.adjust.method = "BH", .id = "Sample") %>%
-  select(Cytokine, `p.adj`) %>%
-  dplyr::rename(`p.adj_NF5`=`p.adj`) 
-
-stat.test4 <- compare_means(
-  Concentration4 ~ Group, data = y, group.by = "Cytokine",
-  method = "wilcox.test", paired = T, p.adjust.method = "BH", .id = "Sample") %>%
-  select(Cytokine, `p.adj`) %>%
-  dplyr::rename(`p.adj_NF4`=`p.adj`) 
-
-stat.test3 <- compare_means(
-  Concentration3 ~ Group, data = y, group.by = "Cytokine",
-  method = "wilcox.test", paired = T, p.adjust.method = "BH", .id = "Sample") %>%
-  select(Cytokine, `p.adj`) %>%
-  dplyr::rename(`p.adj_NF3`=`p.adj`)
-
-stat.test2 <- compare_means(
-  Concentration2 ~ Group, data = y, group.by = "Cytokine",
-  method = "wilcox.test", paired = T, p.adjust.method = "BH", .id = "Sample") %>%
-  select(Cytokine, `p.adj`) %>%
-  dplyr::rename(`p.adj_NF2`=`p.adj`)
 
 stat.test1 <- compare_means(
   Concentration1 ~ Group, data = y, group.by = "Cytokine",
@@ -197,17 +176,45 @@ stat.test1 <- compare_means(
   select(Cytokine, `p.adj`) %>%
   dplyr::rename(`p.adj_NF_IP10`=`p.adj`)
 
-stat.test1.1 <- compare_means(
-  Concentration1.1 ~ Group, data = y, group.by = "Cytokine",
+stat.test2 <- compare_means(
+  Concentration2 ~ Group, data = y, group.by = "Cytokine",
   method = "wilcox.test", paired = T, p.adjust.method = "BH", .id = "Sample") %>%
   select(Cytokine, `p.adj`) %>%
   dplyr::rename(`p.adj_NF_TNFa`=`p.adj`)
 
-# В виде таблицы 
-stat.test <- Reduce(function(...) merge(..., all = TRUE, by="Cytokine"),
-                      list(stat.test1, stat.test1.1, stat.test2, stat.test3,
-                           stat.test4, stat.test5))
+stat.test3 <- compare_means(
+  Concentration3 ~ Group, data = y, group.by = "Cytokine",
+  method = "wilcox.test", paired = T, p.adjust.method = "BH", .id = "Sample") %>%
+  select(Cytokine, `p.adj`) %>%
+  dplyr::rename(`p.adj_NF2`=`p.adj`)
 
+stat.test4 <- compare_means(
+  Concentration4 ~ Group, data = y, group.by = "Cytokine",
+  method = "wilcox.test", paired = T, p.adjust.method = "BH", .id = "Sample") %>%
+  select(Cytokine, `p.adj`) %>%
+  dplyr::rename(`p.adj_NF3`=`p.adj`)
+
+stat.test5 <- compare_means(
+  Concentration5 ~ Group, data = y, group.by = "Cytokine",
+  method = "wilcox.test", paired = T, p.adjust.method = "BH", .id = "Sample") %>%
+  select(Cytokine, `p.adj`) %>%
+  dplyr::rename(`p.adj_NF4`=`p.adj`)
+
+stat.test6 <- compare_means(
+  Concentration6 ~ Group, data = y, group.by = "Cytokine",
+  method = "wilcox.test", paired = T, p.adjust.method = "BH", .id = "Sample") %>%
+  select(Cytokine, `p.adj`) %>%
+  dplyr::rename(`p.adj_NF5`=`p.adj`)
+
+
+stat.test <- Reduce(function(...) merge(..., all = TRUE, by="Cytokine"),
+                      list(stat.test1,  
+                           stat.test2, 
+                           stat.test3,
+                           stat.test4, 
+                           stat.test5,
+                           stat.test6
+                           ))
 
 stat.test
 
@@ -233,19 +240,18 @@ prepared[,5:15] <- sapply(prepared[,5:15], function(x) x/prepared$NF2)
 x <- prepared %>%
   gather(key = "Cytokine", value = "Concentration", - Sample, -Group, -Plate, -Standard) %>%
   mutate(Sample = as.character(Sample)) %>%
-  dplyr::filter(!is.na(Concentration))
-
-x <- x %>%
+  dplyr::filter(!is.na(Concentration)) %>%
   dplyr::filter(Cytokine != "NF2") #exclude calculated NF from data 
 
 #
 stat1 <- x %>%
   group_by(Group, Cytokine) %>%
   dplyr::summarise(count = n(),
-                   median = round(median(Concentration, na.rm = TRUE), digits = 2),
-                   Q1 = round(quantile(Concentration, 0.25, na.rm = TRUE), digits = 2),
-                   Q3 = round(quantile(Concentration, 0.75, na.rm = TRUE), digits = 2),
-                   IQR = round(IQR(Concentration, na.rm = TRUE), digits = 2))
+            median = round(median(Concentration, na.rm = TRUE), digits = 2),
+            Q1 = round(quantile(Concentration, 0.25, na.rm = TRUE), digits = 2),
+            Q3 = round(quantile(Concentration, 0.75, na.rm = TRUE), digits = 2),
+            IQR = round(IQR(Concentration, na.rm = TRUE), digits = 2),
+            .groups = "keep")
 
 # 
 Max <- x %>%
@@ -315,7 +321,7 @@ ggboxplot(x[x$Cytokine != "IP-10" & x$Cytokine != "TNF-a",], add = "jitter",
 ```
 
 ## 11. Normalize imputed values for other cytokines;
-## 12. Comparing groups by signed rank test;
+### Comparing groups by signed rank test;
 
 ```{r}
 colnames(data_st)[c(1,3,5)] <- c("Standard", "Sample", "Plate")
@@ -363,7 +369,6 @@ Mergind_table <- Mergind_table %>%
                             Start_Interval_Media >= Start_Interval_Plasma & End_Interval_Plasma >= End_Interval_Media ~ "Zero"))
 
 # Prepare tables for Signed rank test 
-
 # Create table by cytokine with count of Result values
 
 Signed_test <- Mergind_table %>%
@@ -385,3 +390,71 @@ Signed_test
 # write.xlsx(Signed_test, "Signed_rank_test.xlsx")
 ```
 
+## 13. Correlation analysis for all cytokines (before normalization to define the influence of IP-10 and TNF-a)
+
+```{r}
+#
+prepared <- data
+
+# Corr matrix for Plasma
+prepared$Group %>% unique()
+colnames(prepared)
+
+corr_p <- corr.test(prepared[prepared$Group == "Plasma",c(5:15)], y = NULL, use = "pairwise", method="spearman", adjust="BH", alpha = 0.05)
+
+# Corr matrix for Media 
+corr_m <- corr.test(prepared[prepared$Group == "Media",c(5:15)], y = NULL, use = "pairwise", method="spearman", adjust="BH", alpha = 0.05)
+
+#
+matrix_m <- corr_m$r
+matrix_p <- corr_p$r
+
+#
+#jpeg("Corr_Plasma.jpeg", width = 10, height = 10, units = 'in', res = 700, family = "serif")
+corrplot(corr_p$r, type="upper", method="square", tl.col = 'black', tl.cex= 1,
+         cl.ratio = 0.15, cl.cex = 1, addCoef.col ='black', tl.srt = 45, number.cex = 0.6, 
+         p.mat = corr_p$p, sig.level = 0.05, diag = F, insig = "blank", col=colorRampPalette(c("#4A52A7","white","#D70131"))(200), title = "Cytokine correllation in Plasma", main.pos = "top",  mar=c(0,0,1,0))
+#dev.off()
+
+#
+#jpeg("Corr_Media.jpeg", width = 10, height = 10, units = 'in', res = 700, family = "serif")
+corrplot(corr_m$r, type="upper", method="square", tl.col = 'black', tl.cex= 1,
+         cl.ratio = 0.15, cl.cex = 1, addCoef.col ='black', tl.srt = 45, number.cex = 0.6, 
+         p.mat = corr_m$p, sig.level = 0.05, diag = F, insig = "blank", col=colorRampPalette(c("#4A52A7","white","#D70131"))(200), main = "Cytokine correllation in Media", main.pos = "top",  mar=c(0,0,1,0))
+#dev.off()
+
+```
+
+## 14. Hierarchical clusterisation on the heatmap by Ward.D2
+```{r}
+colnames(matrix_m)
+rownames(matrix_m)
+matrix_m
+
+min(matrix_p)
+
+#jpeg("Heatmap_Plasma.jpeg", width = 10, height = 7, units = 'in', res = 700, family = "serif", pointsize = 12)
+tiff("Heatmap_Plasma.tiff", width = 10, height = 7, units = 'in', res = 700, family = "serif", pointsize = 12)
+Heatmap(matrix_p, 
+        column_title = "Clusterization of cytokines in Plasma", #title of legend
+        name = "Spearman's Rho",
+        row_title = "Cytokines",
+        row_names_gp = gpar(fontsize = 10), # Text size for row names
+        column_names_gp = gpar(fontsize = 10),
+        cluster_columns = F,
+        clustering_distance_rows = "spearman",
+        clustering_method_rows = "complete", split = 4) # complete
+
+#jpeg("Heatmap_Media.jpeg", width = 10, height = 7, units = 'in', res = 700, family = "serif", pointsize = 12)
+tiff("Heatmap_Media.tiff", width = 10, height = 7, units = 'in', res = 700, family = "serif", pointsize = 12)
+Heatmap(matrix_m, 
+        column_title = "Clusterization of cytokines in Media", #title of legend
+        name = "Spearman's Rho",
+        row_title = "Cytokines",
+        row_names_gp = gpar(fontsize = 10), # Text size for row names
+        column_names_gp = gpar(fontsize = 10),
+        cluster_columns = F,
+        clustering_distance_rows = "spearman",
+        clustering_method_rows = "complete", split = 4) # complete
+dev.off()
+```
